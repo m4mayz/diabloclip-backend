@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List
 
 class VideoRequest(BaseModel):
     url: str
@@ -9,7 +9,10 @@ class Clip(BaseModel):
     title: str
     start: int
     end: int
-    reason: str
+    reason: str             # Kenapa bagus
+    highlight_quote: str    # Kalimat penting/moment
+    hook_text: str          # Text on screen
+    social_caption: str     # Caption pendek (Max 5 kata)
 
 class AnalysisResponse(BaseModel):
     video_id: str

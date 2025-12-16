@@ -42,12 +42,27 @@ async def transcribe_with_chutes(audio_path: str):
     return transcript.text
 
 async def analyze_with_llama(text: str):
-    """Menggunakan Llama 3 di Chutes untuk logic viral"""
+    """
+    Menggunakan Llama 3 di Chutes dengan prompt yang diperkaya
+    untuk menghasilkan metadata viral (Hook, Caption, Quote).
+    """
     system_prompt = """
-    You are a viral content editor. Analyze the transcript.
-    Identify 3-5 engaging segments (15s - 60s) suitable for TikTok/Shorts.
-    RETURN ONLY RAW JSON ARRAY. No markdown, no explanations.
-    Format: [{"id": 1, "title": "Catchy Title", "start": 10, "end": 40, "reason": "Why good"}]
+    You are an expert viral video editor. Your task is to analyze the transcript and extract 3-5 clips that have high viral potential for TikTok/Shorts.
+
+    CONSTRAINTS:
+    1. Clip duration must be between 15 and 60 seconds.
+    2. Output MUST be a valid JSON Array. No markdown formatting.
+    3. LANGUAGE: Use Indonesian (Bahasa Indonesia) for all text fields.
+
+    REQUIRED JSON FIELDS FOR EACH CLIP:
+    - "id": integer (1, 2, 3...)
+    - "title": string (Catchy title)
+    - "start": integer (Start time in seconds)
+    - "end": integer (End time in seconds)
+    - "reason": string (Why is this specific part viral/good?)
+    - "highlight_quote": string (The most important sentence spoken in this clip)
+    - "hook_text": string (Short, punchy text to put ON THE VIDEO screen to stop scrolling)
+    - "social_caption": string (Very short caption for Instagram/TikTok description. MAXIMUM 5 WORDS).
     """
     
     try:
@@ -55,18 +70,29 @@ async def analyze_with_llama(text: str):
             model="meta-llama/Meta-Llama-3.1-70B-Instruct",
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text[:15000]} # Limit token
+                {"role": "user", "content": f"Here is the transcript:\n{text[:15000]}"}
             ],
             temperature=0.7
         )
         content = response.choices[0].message.content
+        
         # Cleaning potential markdown syntax
         content = content.replace("```json", "").replace("```", "").strip()
         return json.loads(content)
+        
     except Exception as e:
         print(f"AI Error: {e}")
         # Fallback dummy jika AI gagal parsing
-        return [{"id": 0, "title": "Manual Check", "start": 0, "end": 10, "reason": "AI Error"}]
+        return [{
+            "id": 0, 
+            "title": "Error Parsing", 
+            "start": 0, "end": 10, 
+            "reason": "AI Error",
+            "highlight_quote": "-",
+            "hook_text": "Check Manual",
+            "social_caption": "Check Video"
+        }]
+        
 
 def process_video_cut(video_id: str, url: str, start: int, end: int):
     """
