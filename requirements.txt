@@ -6,3 +6,4 @@ openai
 yt-dlp
 moviepy
 pydantic
+aiohttp

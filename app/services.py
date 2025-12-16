@@ -2,17 +2,15 @@ import os
 import json
 import base64
 import yt_dlp
-from openai import OpenAI
+import aiohttp
 from moviepy.video.io.ffmpeg_tools import ffmpeg_extract_subclip
 from dotenv import load_dotenv
 
+
 load_dotenv()
 
-# Setup Chutes Client
-client = OpenAI(
-    api_key=os.getenv("CHUTES_API_KEY"),
-    base_url="https://chutes.ai/api/v1"
-)
+# Chutes API Configuration
+CHUTES_API_KEY = os.getenv("CHUTES_API_KEY")
 
 TEMP_DIR = "temp"
 os.makedirs(TEMP_DIR, exist_ok=True)
@@ -54,13 +52,13 @@ async def download_audio(url: str, video_id: str):
         'format': 'bestaudio/best',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
+            'preferredcodec': 'wav',
         }],
         'outtmpl': output_path, # yt-dlp akan tambah .mp3 otomatis
         'quiet': True,
         'nocheckcertificate': True,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+
     }
     
     if cookie_file:
@@ -68,17 +66,34 @@ async def download_audio(url: str, video_id: str):
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(url, download=True)
-        return f"{output_path}.mp3", info.get('title', 'Unknown Video')
+        return f"{output_path}.wav", info.get('title', 'Unknown Video')
 
 async def transcribe_with_chutes(audio_path: str):
     """Transkripsi Audio -> Text menggunakan Whisper V3"""
     try:
+        # Read and encode audio to base64
         with open(audio_path, "rb") as audio_file:
-            transcript = client.audio.transcriptions.create(
-                model="openai/whisper-large-v3",
-                file=audio_file
-            )
-        return transcript.text
+            audio_bytes = audio_file.read()
+            audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
+        
+        headers = {
+            "Authorization": f"Bearer {CHUTES_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        body = {
+            "language": "id",
+            "audio_b64": audio_b64
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://chutes-whisper-large-v3.chutes.ai/transcribe",
+                headers=headers,
+                json=body
+            ) as response:
+                result = await response.json()
+                return result.get('text', '')
     except Exception as e:
         print(f"Transkripsi Error: {e}")
         raise e
@@ -104,18 +119,33 @@ async def analyze_with_llama(text: str):
     """
     
     try:
-        response = client.chat.completions.create(
-            model="meta-llama/Meta-Llama-3.1-70B-Instruct",
-            messages=[
+        headers = {
+            "Authorization": f"Bearer {CHUTES_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        body = {
+            "model": "moonshotai/Kimi-K2-Instruct-0905",
+            "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": text[:15000]} # Limit karakter
+                {"role": "user", "content": text[:15000]}
             ],
-            temperature=0.7
-        )
-        content = response.choices[0].message.content
-        # Bersihkan format markdown jika ada
-        content = content.replace("```json", "").replace("```", "").strip()
-        return json.loads(content)
+            "stream": False,
+            "max_tokens": 2048,
+            "temperature": 0.7
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://llm.chutes.ai/v1/chat/completions",
+                headers=headers,
+                json=body
+            ) as response:
+                result = await response.json()
+                content = result['choices'][0]['message']['content']
+                # Bersihkan format markdown jika ada
+                content = content.replace("```json", "").replace("```", "").strip()
+                return json.loads(content)
     except Exception as e:
         print(f"AI Error: {e}")
         # Return dummy data agar tidak crash
@@ -147,6 +177,12 @@ def process_video_cut(video_id: str, url: str, start: int, end: int):
             'quiet': True,
             'nocheckcertificate': True,
             'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'player_skip': ['webpage', 'configs'],
+                }
+            },
         }
         
         if cookie_file:
